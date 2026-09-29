@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 @dataclass(frozen=True)
@@ -9,6 +12,7 @@ class Settings:
     app_name: str = "特种设备点检运维平台"
     env: str = "local"
     port: int = 8000
+    data_file: str = "data/store.json"
     allowed_origins: list[str] = field(
         default_factory=lambda: [
             "http://127.0.0.1:5173",
@@ -17,6 +21,14 @@ class Settings:
     )
     page_size_default: int = 20
     page_size_max: int = 200
+
+    @property
+    def data_path(self) -> Path:
+        """落库文件统一放在后端根目录下，避免各启动方式写出多份数据。"""
+        path = Path(self.data_file)
+        if not path.is_absolute():
+            path = BASE_DIR / path
+        return path
 
 
 settings = Settings()

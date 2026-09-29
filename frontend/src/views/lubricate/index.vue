@@ -38,6 +38,7 @@
         <tr v-for="row in rows" :key="String(row.id)">
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
           <td class="row-actions">
+            <button class="link" type="button" @click="openEdit(row)">保存保养信息</button>
             <button
               v-for="action in actions"
               :key="action"
@@ -59,27 +60,82 @@
       <span>共 {{ total }} 条润滑保养记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
+
+    <div v-if="formVisible" class="modal-mask" @click.self="closeForm">
+      <div class="modal-card">
+        <h3>{{ formMode === 'create' ? '登记保养记录' : '保存保养信息' }}</h3>
+        <div class="form-grid">
+          <label v-for="field in formFields" :key="field" class="form-item">
+            <span>{{ field }}{{ requiredFields.includes(field) ? ' *' : '' }}</span>
+            <input
+              v-model="formValues[field]"
+              :readonly="field === '保养单号' && formMode === 'edit'"
+              :type="field === '保养日期' ? 'date' : 'text'"
+              :placeholder="`请输入${field}`"
+            />
+          </label>
+        </div>
+        <p v-if="formMessage" class="error-text" style="margin: 10px 0 0; font-size: 12px;">{{ formMessage }}</p>
+        <div class="modal-foot">
+          <button class="btn ghost" type="button" :disabled="saving" @click="closeForm">取消</button>
+          <button class="btn" type="button" :disabled="saving" @click="submitForm(false)">保存</button>
+          <button
+            v-if="formMode === 'edit'"
+            class="btn primary"
+            type="button"
+            :disabled="saving"
+            @click="submitForm(true)"
+          >
+            保存并确认完成
+          </button>
+          <button v-else class="btn primary" type="button" :disabled="saving" @click="submitForm(false)">登记</button>
+        </div>
+      </div>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { request } from '@/api/client'
 
-type Row = Record<string, string | number | null>
+type Row = Record<string, string | number | boolean | null>
+type FormMode = 'create' | 'edit'
 
 const ENDPOINT = '/api/lubricate'
 const columns = ["保养单号", "保养设备", "润滑点位", "油品规格", "加注用量", "保养人员", "保养日期", "保养状态"]
 const actions = ["安排保养", "确认完成", "标记延期"]
-const statuses = ["待保养", "保养中", "已完成", "已延期"]
-const stats = [{"label": "待保养设备", "value": 0}, {"label": "本月保养单数", "value": 0}, {"label": "已延期保养", "value": 0}]
+const formFields = ["保养单号", "保养设备", "润滑点位", "油品规格", "加注用量", "保养人员", "保养日期"]
+const requiredFields = ["保养单号", "保养设备", "润滑点位"]
 
 const rows = ref<Row[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+
+// 页面统计与首页 /api/overview 同源：待处理就是 status !== '已完成'
+// （已延期仍然算未完成），避免两个页面各算各的。
+const stats = computed(() => {
+  const now = new Date()
+  const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const pending = rows.value.filter((row) => row['status'] !== '已完成').length
+  const monthCount = rows.value.filter((row) => String(row['保养日期'] ?? '').startsWith(monthPrefix)).length
+  const delayed = rows.value.filter((row) => row['status'] === '已延期').length
+  return [
+    { label: '待保养设备', value: pending },
+    { label: '本月保养单数', value: monthCount },
+    { label: '已延期保养', value: delayed },
+  ]
+})
+
+const formVisible = ref(false)
+const formMode = ref<FormMode>('create')
+const formValues = ref<Record<string, string>>({})
+const editingId = ref<number | null>(null)
+const formMessage = ref('')
+const saving = ref(false)
 
 function resetFilters() {
   filters.value = {}
@@ -90,8 +146,62 @@ function exportRows() {
   window.open(`${ENDPOINT}/export`, '_blank')
 }
 
+function emptyForm() {
+  return Object.fromEntries(formFields.map((field) => [field, '']))
+}
+
 function openCreate() {
-  errorMessage.value = '保养记录登记入口尚未接入审批流'
+  formMode.value = 'create'
+  editingId.value = null
+  formValues.value = emptyForm()
+  formMessage.value = ''
+  formVisible.value = true
+}
+
+function openEdit(row: Row) {
+  formMode.value = 'edit'
+  editingId.value = Number(row.id)
+  formValues.value = Object.fromEntries(
+    formFields.map((field) => [field, row[field] == null ? '' : String(row[field])]),
+  )
+  formMessage.value = ''
+  formVisible.value = true
+}
+
+function closeForm() {
+  formVisible.value = false
+  editingId.value = null
+}
+
+async function submitForm(complete: boolean) {
+  formMessage.value = ''
+  const missing = requiredFields.filter((field) => !formValues.value[field]?.trim())
+  if (missing) {
+    formMessage.value = `缺少必填字段：${missing.join('、')}`
+    return
+  }
+  saving.value = true
+  try {
+    const values: Record<string, unknown> = { ...formValues.value }
+    if (complete) {
+      values.complete = true
+    }
+    const url = formMode.value === 'create' ? ENDPOINT : `${ENDPOINT}/${editingId.value}`
+    const response = await request(url, {
+      method: formMode.value === 'create' ? 'POST' : 'PUT',
+      body: JSON.stringify({ values }),
+    })
+    const payload = await response.json().catch(() => null) as { ok?: boolean; message?: string } | null
+    if (!response.ok || !payload || payload.ok === false) {
+      throw new Error(payload?.message || '保养记录保存未生效，请稍后重试')
+    }
+    closeForm()
+    await reload()
+  } catch (error) {
+    formMessage.value = error instanceof Error ? error.message : '保养记录保存失败'
+  } finally {
+    saving.value = false
+  }
 }
 
 async function runAction(action: string, row: Row) {
@@ -99,10 +209,12 @@ async function runAction(action: string, row: Row) {
   try {
     const response = await request(`${ENDPOINT}/${row.id}/actions`, {
       method: 'POST',
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ values: { action } }),
     })
-    if (!response.ok) {
-      throw new Error('润滑保养动作未生效，请稍后重试')
+    const payload = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null
+    // 业务失败时后端返回 ok:false，不能只看 HTTP 状态码，否则页面会显示“已完成”而记录没动。
+    if (!response.ok || !payload || payload.ok === false) {
+      throw new Error(payload?.message || '润滑保养动作未生效，请稍后重试')
     }
     await reload()
   } catch (error) {

@@ -17,7 +17,7 @@
 ├── backend/                  FastAPI（Python） 后端
 │   ├── app/routers/          每个业务模块一组接口
 │   ├── app/services/         业务规则与状态流转
-│   └── app/store.py          内存数据仓库与示例数据
+│   └── app/store.py          数据仓库：内存读写 + JSON 落盘（backend/data/store.json）
 ├── .gitignore
 └── docker-compose.yml
 ```
@@ -73,4 +73,12 @@ npm run dev
 - 每个模块的前端页面在 `frontend/src/views/<模块>/index.vue`，后端接口在
   `backend/app/routers/<模块>.py`，业务规则在 `backend/app/services/<模块>.py`。
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
+- 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
+- 数据仓库（`app/store.py`）是唯一数据源：业务层直接改仓库里的行，每次增改都原子
+  落盘到 `backend/data/store.json`；首次启动没有该文件时用示例数据播种。刷新页面、
+  重启进程后读到的都是同一份数据。
+- 润滑保养的字段、列表展示的「保养状态」和首页统计用的 `pending` 共用同一口径：
+  `保养状态 == status`，只有「已完成」不算未完成（「已延期」仍算待处理）。保存保养
+  信息走 `PUT /api/lubricate/{id}`，未提交的历史字段按当时取值保留；带
+  `values.complete=true` 时保存与「确认完成」在同一笔里落库。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。

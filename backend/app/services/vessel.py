@@ -44,6 +44,7 @@ class VesselService:
         entry["pending"] = True
         entry["abnormal"] = False
         rows.append(entry)
+        store.commit()
         return entry, []
 
     def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
@@ -58,4 +59,5 @@ class VesselService:
         entry["status"] = target
         entry["pending"] = target != STATUS_ORDER[-1]
         entry["abnormal"] = action in NEGATIVE_ACTIONS
+        store.commit()
         return entry, f"压力容器已{action}"
